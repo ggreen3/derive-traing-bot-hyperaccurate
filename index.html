@@ -1,0 +1,1155 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Synthetic Indices Trading Bot</title>
+  <style>
+    body {
+      font-family: 'Arial', sans-serif;
+      background: #121212;
+      color: #f4f4f4;
+      padding: 20px;
+      margin: 0;
+    }
+    .container {
+      max-width: 1200px;
+      margin: auto;
+      padding: 20px;
+      background: #1e1e1e;
+      border-radius: 10px;
+      box-shadow: 0 4px 15px rgba(0, 0, 0, 0.3);
+    }
+    h2 {
+      color: #00bcd4;
+      text-align: center;
+    }
+    .stats {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+      gap: 15px;
+      margin-bottom: 20px;
+    }
+    .stats div {
+      background: #2a2a2a;
+      padding: 15px;
+      border-radius: 8px;
+      text-align: center;
+    }
+    .stats div span {
+      font-size: 24px;
+      font-weight: bold;
+      display: block;
+      margin-top: 5px;
+    }
+    #winCount { color: #4caf50; }
+    #lossCount { color: #f44336; }
+    #winRate { color: #00bcd4; }
+    #accountBalance { color: #ffc107; }
+    .log {
+      background: #333;
+      padding: 15px;
+      border-radius: 5px;
+      height: 400px;
+      overflow-y: auto;
+      font-family: monospace;
+      margin-top: 20px;
+    }
+    .log p {
+      margin: 5px 0;
+      padding: 5px;
+      border-bottom: 1px solid #444;
+    }
+    .log .win { color: #4caf50; }
+    .log .loss { color: #f44336; }
+    .log .info { color: #00bcd4; }
+    button {
+      background: #00bcd4;
+      color: white;
+      border: none;
+      padding: 12px 20px;
+      border-radius: 5px;
+      cursor: pointer;
+      margin: 10px;
+    }
+    button:hover { opacity: 0.9; }
+    #stopBtn { background: #f44336; }
+    input {
+      width: calc(100% - 20px);
+      padding: 10px;
+      margin: 10px;
+      background: #2a2a2a;
+      color: #fff;
+      border: 1px solid #444;
+      border-radius: 5px;
+    }
+    .market-stats {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
+      gap: 15px;
+      margin: 15px 0;
+    }
+    .market-card {
+      background: #2a2a2a;
+      padding: 15px;
+      border-radius: 5px;
+    }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <h2>Synthetic Indices Trading Bot</h2>
+    
+    <div class="stats">
+      <div>Wins: <span id="wins">0</span></div>
+      <div>Losses: <span id="losses">0</span></div>
+      <div>Win Rate: <span id="winRate">0.00%</span></div>
+      <div>Balance: <span id="balance">$0.00</span></div>
+      <div>Stake: <span id="stake">$0.00</span></div>
+      <div>Faux Win Rate: <span id="fauxWinRate">0.00%</span></div>
+    </div>
+
+    <div>
+      <input id="apiKey" type="text" placeholder="Enter your API Key" />
+      <input id="initialStake" type="number" placeholder="Initial Stake Amount" value="1" />
+      <button id="startBtn">Start Trading</button>
+      <button id="stopBtn">Stop Trading</button>
+    </div>
+
+    <div id="marketsContainer" class="market-stats"></div>
+    <div class="log" id="log"></div>
+  </div>
+
+  <script>
+    class TechnicalAnalysis {
+      constructor() {
+        this.prices = [];
+        this.highs = [];
+        this.lows = [];
+        this.supportLevels = [];
+        this.resistanceLevels = [];
+      }
+
+      updateData(price) {
+        this.prices.push(price);
+        if (this.prices.length > 100) this.prices.shift();
+        
+        // Update highs and lows for support/resistance
+        const period = 20;
+        if (this.prices.length >= period) {
+          const slice = this.prices.slice(-period);
+          this.highs.push(Math.max(...slice));
+          this.lows.push(Math.min(...slice));
+          if (this.highs.length > period) this.highs.shift();
+          if (this.lows.length > period) this.lows.shift();
+          this.updateSupportResistance();
+        }
+      }
+
+      calculateRSI(period = 14) {
+        if (this.prices.length < period + 1) return 50;
+
+        let gains = 0;
+        let losses = 0;
+        
+        for (let i = 1; i <= period; i++) {
+          const diff = this.prices[this.prices.length - i] - this.prices[this.prices.length - i - 1];
+          if (diff >= 0) gains += diff;
+          else losses -= diff;
+        }
+
+        const avgGain = gains / period;
+        const avgLoss = losses / period;
+        const rs = avgLoss === 0 ? 100 : avgGain / avgLoss;
+        return 100 - (100 / (1 + rs));
+      }
+
+      calculateBollingerBands(period = 20, stdDev = 2) {
+        if (this.prices.length < period) return { upper: 0, middle: 0, lower: 0 };
+
+        const slice = this.prices.slice(-period);
+        const sma = slice.reduce((a, b) => a + b) / period;
+        const variance = slice.reduce((sum, price) => sum + Math.pow(price - sma, 2), 0) / period;
+        const standardDeviation = Math.sqrt(variance);
+
+        return {
+          upper: sma + (stdDev * standardDeviation),
+          middle: sma,
+          lower: sma - (stdDev * standardDeviation)
+        };
+      }
+
+      calculateMA(period) {
+        if (this.prices.length < period) return 0;
+        return this.prices.slice(-period).reduce((a, b) => a + b) / period;
+      }
+
+      updateSupportResistance() {
+        // Find local minima and maxima
+        const period = 10;
+        if (this.prices.length < period * 2) return;
+
+        const recentPrices = this.prices.slice(-period * 2);
+        const potentialSupport = [];
+        const potentialResistance = [];
+
+        for (let i = period; i < recentPrices.length - period; i++) {
+          const current = recentPrices[i];
+          const leftSlice = recentPrices.slice(i - period, i);
+          const rightSlice = recentPrices.slice(i + 1, i + period + 1);
+
+          // Check for local minimum (support)
+          if (current <= Math.min(...leftSlice) && current <= Math.min(...rightSlice)) {
+            potentialSupport.push(current);
+          }
+          // Check for local maximum (resistance)
+          if (current >= Math.max(...leftSlice) && current >= Math.max(...rightSlice)) {
+            potentialResistance.push(current);
+          }
+        }
+
+        this.supportLevels = potentialSupport;
+        this.resistanceLevels = potentialResistance;
+      }
+
+      analyzeMarket() {
+        if (this.prices.length < 50) return null;
+        
+        const currentPrice = this.prices[this.prices.length - 1];
+        const signals = [];
+        let totalWeight = 0;
+        
+        // Basic trend analysis (weight: 2)
+        const trend = this.calculateBasicTrend();
+        if (trend > 0) signals.push({ type: 'CALL', weight: 2 });
+        if (trend < 0) signals.push({ type: 'PUT', weight: 2 });
+        totalWeight += 2;
+
+        // RSI Analysis (weight: 2)
+        const rsi = this.calculateRSI();
+        if (rsi < 30) signals.push({ type: 'CALL', weight: 2 });
+        if (rsi > 70) signals.push({ type: 'PUT', weight: 2 });
+        totalWeight += 2;
+
+        // Moving Average Analysis (weight: 2)
+        const ma10 = this.calculateMA(10);
+        const ma20 = this.calculateMA(20);
+        if (ma10 > ma20) signals.push({ type: 'CALL', weight: 2 });
+        if (ma10 < ma20) signals.push({ type: 'PUT', weight: 2 });
+        totalWeight += 2;
+
+        // Calculate weighted consensus with lower initial threshold
+        const callWeight = signals.filter(s => s.type === 'CALL')
+                                .reduce((sum, s) => sum + s.weight, 0);
+        const putWeight = signals.filter(s => s.type === 'PUT')
+                                .reduce((sum, s) => sum + s.weight, 0);
+
+        // Start with 60% threshold for signals
+        if (callWeight / totalWeight > 0.6) return 'CALL';
+        if (putWeight / totalWeight > 0.6) return 'PUT';
+        return 'NEUTRAL';
+      }
+
+      // New Technical Analysis Methods
+
+      calculateMACD() {
+        const prices = this.prices;
+        const ema12 = this.calculateEMA(12);
+        const ema26 = this.calculateEMA(26);
+        const macd = ema12 - ema26;
+        const signal = this.calculateEMA(9, [macd]);
+        const histogram = macd - signal;
+        
+        return { macd, signal, histogram };
+      }
+
+      analyzeSupportResistance() {
+        const prices = this.prices;
+        const period = 20;
+        let supports = [];
+        let resistances = [];
+
+        // Find local minima and maxima
+        for (let i = period; i < prices.length - period; i++) {
+          const current = prices[i];
+          const leftSlice = prices.slice(i - period, i);
+          const rightSlice = prices.slice(i + 1, i + period + 1);
+
+          if (current <= Math.min(...leftSlice) && current <= Math.min(...rightSlice)) {
+            supports.push(current);
+          }
+          if (current >= Math.max(...leftSlice) && current >= Math.max(...rightSlice)) {
+            resistances.push(current);
+          }
+        }
+
+        return {
+          nearestSupport: supports.length ? Math.max(...supports) : 0,
+          nearestResistance: resistances.length ? Math.min(...resistances) : Infinity
+        };
+      }
+
+      analyzeMovingAverages() {
+        const signals = [];
+        const ma10 = this.calculateMA(10);
+        const ma20 = this.calculateMA(20);
+        const ma50 = this.calculateMA(50);
+
+        // Multiple MA crossover strategy
+        if (ma10 > ma20 && ma20 > ma50) signals.push({ type: 'CALL', weight: 2 });
+        if (ma10 < ma20 && ma20 < ma50) signals.push({ type: 'PUT', weight: 2 });
+
+        return signals;
+      }
+
+      analyzeVolumeProfile() {
+        // Simulated volume profile analysis
+        const recentPrices = this.prices.slice(-20);
+        const priceChanges = recentPrices.map((price, i) => 
+          i > 0 ? price - recentPrices[i-1] : 0
+        );
+        
+        const volumeAccumulation = priceChanges.reduce((sum, change) => sum + Math.abs(change), 0);
+        const upVolume = priceChanges.filter(change => change > 0)
+                                    .reduce((sum, change) => sum + change, 0);
+        
+        if (upVolume / volumeAccumulation > 0.7) return 'CALL';
+        if (upVolume / volumeAccumulation < 0.3) return 'PUT';
+        return null;
+      }
+
+      analyzeFibonacciLevels() {
+        const prices = this.prices;
+        const high = Math.max(...prices);
+        const low = Math.min(...prices);
+        const diff = high - low;
+        const currentPrice = prices[prices.length - 1];
+        
+        const fibLevels = {
+          0.236: low + diff * 0.236,
+          0.382: low + diff * 0.382,
+          0.618: low + diff * 0.618,
+          0.786: low + diff * 0.786
+        };
+
+        // Check if price is near any Fibonacci level
+        for (const [level, price] of Object.entries(fibLevels)) {
+          if (Math.abs(currentPrice - price) / price < 0.01) {
+            return currentPrice < price ? 'CALL' : 'PUT';
+          }
+        }
+        return null;
+      }
+
+      analyzeMomentum() {
+        const prices = this.prices;
+        const roc = this.calculateRateOfChange();
+        const stochastic = this.calculateStochastic();
+        const cci = this.calculateCCI();
+
+        if (roc > 0 && stochastic.k > stochastic.d && cci > 100) return 'CALL';
+        if (roc < 0 && stochastic.k < stochastic.d && cci < -100) return 'PUT';
+        return null;
+      }
+
+      calculateRateOfChange(period = 9) {
+        const prices = this.prices;
+        if (prices.length < period) return 0;
+        return ((prices[prices.length - 1] - prices[prices.length - period]) / 
+                prices[prices.length - period]) * 100;
+      }
+
+      calculateStochastic(period = 14) {
+        const prices = this.prices;
+        if (prices.length < period) return { k: 50, d: 50 };
+
+        const recentPrices = prices.slice(-period);
+        const currentPrice = prices[prices.length - 1];
+        const high = Math.max(...recentPrices);
+        const low = Math.min(...recentPrices);
+        
+        const k = ((currentPrice - low) / (high - low)) * 100;
+        const d = this.calculateMA(3, [k]);
+
+        return { k, d };
+      }
+
+      calculateCCI(period = 20) {
+        const prices = this.prices;
+        if (prices.length < period) return 0;
+
+        const typicalPrices = prices.map(price => price); // Simplified for this example
+        const sma = this.calculateMA(period, typicalPrices);
+        const meanDeviation = this.calculateMeanDeviation(typicalPrices, sma, period);
+        
+        return (typicalPrices[typicalPrices.length - 1] - sma) / (0.015 * meanDeviation);
+      }
+
+      calculateMeanDeviation(prices, sma, period) {
+        const deviations = prices.slice(-period).map(price => Math.abs(price - sma));
+        return deviations.reduce((sum, dev) => sum + dev, 0) / period;
+      }
+
+      calculateBasicTrend() {
+        const prices = this.prices;
+        const period = 10;
+        if (prices.length < period) return 0;
+        
+        const recentPrices = prices.slice(-period);
+        const firstPrice = recentPrices[0];
+        const lastPrice = recentPrices[recentPrices.length - 1];
+        
+        return lastPrice - firstPrice;
+      }
+    }
+
+    class SyntheticIndicesBot {
+      constructor() {
+        this.ws = null;
+        this.markets = ["R_10", "R_25", "R_50", "R_75", "R_100"];
+        this.analysis = {};
+        this.markets.forEach(market => {
+          this.analysis[market] = new TechnicalAnalysis();
+        });
+        
+        this.winCount = 0;
+        this.lossCount = 0;
+        this.accountBalance = 0;
+        this.currentStake = 0;
+        this.initialStake = 0;
+        this.isRunning = false;
+        this.fauxTrades = new Map();
+        this.lastTradeTime = new Map();
+        this.lastFauxTime = new Map();
+        
+        this.markets.forEach(market => {
+          this.lastTradeTime.set(market, 0);
+          this.lastFauxTime.set(market, 0);
+          this.fauxTrades.set(market, []);
+        });
+
+        // Add new properties for enhanced trading
+        this.tradeHistory = new Map(); // Store trade history per market
+        this.marketScores = new Map(); // Store success scores per market
+        this.consecutiveLosses = 0;
+        this.lastTradeSession = new Map(); // Track trade session outcomes
+        this.analysisWindow = 30000; // Default 30 seconds
+        this.maxStakePercentage = 0.35; // 35% of account balance
+
+        // Add new learning parameters
+        this.marketPerformance = new Map(); // Stores success rates per market
+        this.patternMemory = new Map(); // Stores successful price patterns
+        this.learningRate = 0.15; // How quickly bot adapts to new results
+        this.confidenceThreshold = 0.65; // Minimum confidence to trade
+        this.pricePatternLength = 10; // Length of price patterns to analyze
+
+        // Add these properties to the constructor
+        this.totalTrades = 0;
+        this.tradeHistory = new Map();
+      }
+
+      log(message, type = 'info') {
+        const logDiv = document.getElementById("log");
+        if (!logDiv) {
+            console.error("Log div not found");
+            return;
+        }
+        
+        try {
+            const now = new Date().toLocaleTimeString();
+            const logEntry = document.createElement('p');
+            logEntry.className = type || 'info'; // Default to 'info' if type not provided
+            logEntry.textContent = `${now} - ${message}`;
+            logDiv.insertBefore(logEntry, logDiv.firstChild);
+            
+            // Limit number of log entries to prevent memory issues
+            while (logDiv.children.length > 100) {
+                logDiv.removeChild(logDiv.lastChild);
+            }
+        } catch (error) {
+            console.error("Error adding log entry:", error);
+        }
+      }
+
+      updateStats() {
+        try {
+          // Calculate win rate
+          const winRate = this.totalTrades > 0 ? 
+            ((this.winCount / this.totalTrades) * 100).toFixed(2) : 
+            "0.00";
+
+          // Update DOM elements
+          document.getElementById("wins").textContent = this.winCount;
+          document.getElementById("losses").textContent = this.lossCount;
+          document.getElementById("winRate").textContent = `${winRate}%`;
+          document.getElementById("balance").textContent = `$${this.accountBalance.toFixed(2)}`;
+          document.getElementById("stake").textContent = `$${this.currentStake.toFixed(2)}`;
+          
+          // Update faux win rate if available
+          const fauxWinRate = this.calculateOverallFauxWinRate();
+          document.getElementById("fauxWinRate").textContent = `${fauxWinRate.toFixed(2)}%`;
+        } catch (error) {
+          this.log(`Error updating stats: ${error.message}`, 'loss');
+        }
+      }
+
+      startBot() {
+        if (this.isRunning) return;
+
+        const apiKey = document.getElementById("apiKey").value;
+        if (!apiKey) {
+          this.log("Please enter an API key", "loss");
+          return;
+        }
+
+        this.initialStake = parseFloat(document.getElementById("initialStake").value) || 1;
+        if (this.initialStake <= 0) {
+          this.log("Initial stake must be greater than 0", "loss");
+          return;
+        }
+
+        this.currentStake = this.initialStake;
+        this.isRunning = true;
+
+        try {
+          this.ws = new WebSocket("wss://ws.binaryws.com/websockets/v3?app_id=1089");
+          this.ws.onopen = () => {
+            this.log("Connected to Deriv");
+            this.ws.send(JSON.stringify({ authorize: apiKey }));
+          };
+
+          this.ws.onmessage = (event) => {
+            const data = JSON.parse(event.data);
+
+            if (data.error) {
+              this.log(`Error: ${data.error.message}`, 'loss');
+              this.stopBot();
+              return;
+            }
+
+            switch (data.msg_type) {
+              case "authorize":
+                this.log("Authorization successful");
+                this.accountBalance = data.authorize.balance;
+                this.updateStats();
+                
+                // Subscribe to all markets
+                this.markets.forEach(market => {
+                  this.ws.send(JSON.stringify({
+                    ticks: market,
+                    subscribe: 1
+                  }));
+                });
+                break;
+
+              case "tick":
+                this.processTick(data.tick);
+                break;
+
+              case "proposal":
+                this.handleProposal(data);
+                break;
+
+              case "buy":
+                if (data.buy) {
+                  this.log(`Trade executed: ${data.buy.longcode}`);
+                  // Start monitoring the trade
+                  this.monitorTrade(data.buy.contract_id, data.buy.buy_price);
+                }
+                break;
+
+              case "proposal_open_contract":
+                if (data.proposal_open_contract.is_sold) {
+                  const contractId = data.proposal_open_contract.contract_id;
+                  const profit = data.proposal_open_contract.profit;
+                  const stake = data.proposal_open_contract.buy_price;
+                  
+                  // Handle trade outcome
+                  this.handleTradeOutcome(contractId, profit > 0, stake);
+                }
+                break;
+            }
+          };
+
+          this.ws.onclose = () => {
+            this.log("Connection closed");
+            this.isRunning = false;
+          };
+        } catch (error) {
+          this.log(`WebSocket connection error: ${error.message}`, "loss");
+          this.isRunning = false;
+        }
+      }
+
+      stopBot() {
+        if (this.ws) {
+          this.ws.close();
+        }
+        this.isRunning = false;
+        this.log("Bot stopped");
+      }
+
+      processTick(tick) {
+        const market = tick.symbol;
+        const price = tick.quote;
+        const now = Date.now();
+        
+        // Update technical analysis
+        this.analysis[market].updateData(price);
+        
+        // Log market updates for debugging
+        this.log(`${market} tick: ${price}`, 'info');
+
+        // Force initial trade after sufficient data
+        if (!this.lastTradeTime.get(market)) {
+          this.lastTradeTime.set(market, now - this.analysisWindow - 1000); // Ensure first trade happens soon
+        }
+
+        // Run faux trades more frequently
+        if (now - this.lastFauxTime.get(market) >= 2000) { // Every 2 seconds
+          const signal = this.analysis[market].analyzeMarket();
+          this.runFauxTrades(market, signal);
+          this.lastFauxTime.set(market, now);
+        }
+
+        // Check for trade execution
+        if (now - this.lastTradeTime.get(market) >= this.analysisWindow) {
+          this.log(`Analyzing ${market} for potential trade...`);
+          this.executeOptimalTrades();
+          this.lastTradeTime.set(market, now);
+        }
+      }
+
+      runFauxTrades(market, signal) {
+        if (!this.fauxTrades.has(market)) {
+          this.fauxTrades.set(market, []);
+        }
+
+        const trades = this.fauxTrades.get(market);
+        const prices = this.analysis[market].prices;
+        
+        // Only proceed if we have enough price data
+        if (prices.length < 2) return;
+
+        const currentPrice = prices[prices.length - 1];
+        const previousPrice = prices[prices.length - 2];
+        const priceMove = currentPrice - previousPrice;
+
+        // Get fresh signal if not provided
+        if (!signal || signal === 'NEUTRAL') {
+          signal = this.analysis[market].analyzeMarket();
+        }
+
+        // Only process if we have a valid signal
+        if (signal && signal !== 'NEUTRAL') {
+          const outcome = (signal === 'CALL' && priceMove > 0) || 
+                         (signal === 'PUT' && priceMove < 0) ? 'win' : 'loss';
+          
+          trades.push(outcome);
+          if (trades.length > 5) trades.shift();
+          
+          const fauxWinRate = this.calculateFauxWinRate(market);
+          document.getElementById("fauxWinRate").textContent = `${fauxWinRate.toFixed(2)}%`;
+          
+          this.log(`Faux trade on ${market}: ${outcome.toUpperCase()} (${signal}) - Price move: ${priceMove.toFixed(5)}`, outcome);
+        } else {
+          this.log(`Waiting for valid signal on ${market} - Current move: ${priceMove.toFixed(5)}`);
+        }
+      }
+
+      shouldTrade(market) {
+        const trades = this.fauxTrades.get(market) || [];
+        if (trades.length < 5) {
+          this.log(`Not enough faux trades for ${market} (${trades.length}/5)`);
+          return false;
+        }
+        
+        const wins = trades.filter(t => t === 'win').length;
+        const winRate = (wins / trades.length) * 100;
+        
+        if (winRate >= 80) {
+          this.log(`Trade conditions met for ${market} - Win rate: ${winRate}%`);
+          return true;
+        }
+        
+        this.log(`Insufficient win rate for ${market}: ${winRate}%`);
+        return false;
+      }
+
+      executeTrade(market, action) {
+        // Adjust stake based on account performance
+        this.adjustStake();
+        
+        this.ws.send(JSON.stringify({
+          buy: 1,
+          subscribe: 1,
+          price: this.currentStake,
+          parameters: {
+            amount: this.currentStake,
+            basis: "stake",
+            contract_type: action,
+            currency: "USD",
+            duration: 1,
+            duration_unit: "t",
+            symbol: market
+          }
+        }));
+
+        this.log(`Executing ${action} trade on ${market} with stake $${this.currentStake.toFixed(2)}`);
+      }
+
+      adjustStake() {
+        try {
+          // Check for 5x account growth
+          if (this.accountBalance >= this.initialStake * 5) {
+            this.currentStake = this.roundStake(this.currentStake * 2);
+            this.initialStake = this.accountBalance;
+            this.log(`Account grew 5x! Doubling stake to $${this.currentStake}`);
+          }
+
+          // Implement trailing stop loss
+          const maxDrawdown = this.initialStake * 0.9;
+          if (this.accountBalance < maxDrawdown) {
+            this.currentStake = this.roundStake(Math.max(this.initialStake * 0.5, 1));
+            this.log(`Trailing stop loss triggered. Reducing stake to $${this.currentStake}`, 'loss');
+            this.initialStake = this.accountBalance;
+          }
+
+          // Ensure stake never exceeds maxStakePercentage of account
+          const maxAllowedStake = this.roundStake(this.accountBalance * this.maxStakePercentage);
+          if (this.currentStake > maxAllowedStake) {
+            this.currentStake = maxAllowedStake;
+            this.log(`Stake adjusted to maximum allowed: $${this.currentStake}`);
+          }
+        } catch (error) {
+          this.log(`Error adjusting stake: ${error.message}`, 'loss');
+        }
+      }
+
+      monitorTrade(contractId, entryPrice) {
+        let monitor;
+        let timeout;
+        
+        try {
+          let highWaterMark = entryPrice;
+          let trailingStop = entryPrice * 0.95;
+          
+          monitor = setInterval(() => {
+            if (!this.isRunning) {
+              clearInterval(monitor);
+              clearTimeout(timeout);
+              return;
+            }
+
+            const currentPrice = entryPrice * (1 + (Math.random() - 0.5) * 0.1);
+            
+            if (currentPrice > highWaterMark) {
+              highWaterMark = currentPrice;
+              trailingStop = highWaterMark * 0.95;
+            }
+
+            if (currentPrice < trailingStop) {
+              clearInterval(monitor);
+              clearTimeout(timeout);
+              this.handleTradeOutcome(contractId, false, entryPrice);
+            }
+          }, 1000);
+
+          timeout = setTimeout(() => {
+            clearInterval(monitor);
+            const finalPrice = entryPrice * (1 + (Math.random() - 0.5) * 0.1);
+            this.handleTradeOutcome(contractId, finalPrice > entryPrice, entryPrice);
+          }, 10000);
+        } catch (error) {
+          clearInterval(monitor);
+          clearTimeout(timeout);
+          this.log(`Trade monitoring error: ${error.message}`, "loss");
+        }
+      }
+
+      handleTradeOutcome(contractId, isWin, stake) {
+        try {
+          // Update trade counters
+          this.totalTrades++;
+          if (isWin) {
+            this.winCount++;
+            this.accountBalance += stake * 0.95; // 95% payout
+            this.log(`Trade ${contractId} WON. Profit: $${(stake * 0.95).toFixed(2)}`, 'win');
+          } else {
+            this.lossCount++;
+            this.accountBalance -= stake;
+            this.log(`Trade ${contractId} LOST. Loss: $${stake.toFixed(2)}`, 'loss');
+          }
+
+          // Update consecutive losses
+          this.consecutiveLosses = isWin ? 0 : this.consecutiveLosses + 1;
+
+          // Update session tracking
+          const session = this.lastTradeSession.get('latest') || { wins: 0, total: 0 };
+          session.total++;
+          if (isWin) session.wins++;
+          this.lastTradeSession.set('latest', session);
+
+          // Update trade history
+          const market = this.getCurrentMarket(contractId);
+          if (market) {
+            const trades = this.tradeHistory.get(market) || [];
+            trades.push({
+              timestamp: Date.now(),
+              success: isWin,
+              stake: stake,
+              profit: isWin ? stake * 0.95 : -stake
+            });
+            if (trades.length > 50) trades.shift(); // Keep last 50 trades
+            this.tradeHistory.set(market, trades);
+          }
+
+          // Update market learning
+          const pricePattern = this.analysis[market]?.prices.slice(-this.pricePatternLength);
+          this.updateMarketLearning(market, isWin, pricePattern);
+          
+          // Update stats display
+          this.updateStats();
+          
+          // Adjust trading parameters
+          this.adjustTradingParameters();
+          
+          // Adjust stake for next trade
+          this.adjustStake();
+
+        } catch (error) {
+          this.log(`Error in handleTradeOutcome: ${error.message}`, 'loss');
+        }
+      }
+
+      requestProposal(market, action) {
+        if (!this.isRunning) return;
+
+        const stake = Math.min(
+          this.currentStake,
+          this.accountBalance * this.maxStakePercentage
+        );
+
+        const proposal = {
+          proposal: 1,
+          amount: stake,
+          basis: "stake",
+          contract_type: action,
+          currency: "USD",
+          duration: 1,
+          duration_unit: "t",
+          symbol: market
+        };
+
+        this.log(`Sending ${action} proposal for ${market} with stake $${stake}`);
+        this.ws.send(JSON.stringify(proposal));
+      }
+
+      updateMarketDisplay(market, data) {
+        const container = document.getElementById('marketsContainer');
+        let marketCard = document.getElementById(`market-${market}`);
+        
+        if (!marketCard) {
+          marketCard = document.createElement('div');
+          marketCard.id = `market-${market}`;
+          marketCard.className = 'market-card';
+          container.appendChild(marketCard);
+        }
+        
+        marketCard.innerHTML = `
+          <h3>${market}</h3>
+          <p>Price: $${data.price.toFixed(5)}</p>
+          <p>Signal: ${data.signal || 'NEUTRAL'}</p>
+          <p>Faux Win Rate: ${data.fauxWinRate.toFixed(2)}%</p>
+        `;
+      }
+
+      calculateFauxWinRate(market) {
+        const trades = this.fauxTrades.get(market) || [];
+        if (trades.length === 0) return 0;
+        
+        const wins = trades.filter(t => t === 'win').length;
+        return (wins / trades.length) * 100;
+      }
+
+      // Add new method for advanced market scoring
+      calculateMarketScore(market) {
+        try {
+          const trades = this.tradeHistory.get(market) || [];
+          if (trades.length < 5) return 0.5; // Default score for new markets
+          
+          // Get market performance
+          const performance = this.marketPerformance.get(market) || { confidence: 0.5 };
+          
+          // Calculate technical indicators score
+          const analysis = this.analysis[market];
+          const rsi = analysis.calculateRSI();
+          const bb = analysis.calculateBollingerBands();
+          const macd = analysis.calculateMACD();
+          
+          // Normalize technical indicators
+          const rsiScore = Math.abs(50 - rsi) / 50; // 0-1 scale
+          const bbScore = Math.abs((bb.middle - bb.lower) / bb.middle);
+          const macdScore = Math.abs(macd.histogram) / 100;
+          
+          // Calculate pattern match score
+          const patternScore = this.matchCurrentPattern(market);
+          
+          // Calculate weights
+          const performanceWeight = Math.min(0.4, performance.total / 100);
+          const patternWeight = Math.min(0.3, this.patternMemory.get(market)?.length / 50 || 0);
+          const technicalWeight = 1 - performanceWeight - patternWeight;
+          
+          // Calculate technical score
+          const technicalScore = (rsiScore + bbScore + macdScore) / 3;
+          
+          // Combine all scores with weights
+          const finalScore = (technicalScore * technicalWeight) + 
+                            (performance.confidence * performanceWeight) + 
+                            (patternScore * patternWeight);
+          
+          this.log(`${market} Score Components - Technical: ${technicalScore.toFixed(2)}, Performance: ${performance.confidence.toFixed(2)}, Pattern: ${patternScore.toFixed(2)}`);
+          
+          return finalScore;
+        } catch (error) {
+          this.log(`Error calculating market score for ${market}: ${error.message}`, 'loss');
+          return 0;
+        }
+      }
+
+      // New method for executing optimal trades
+      async executeOptimalTrades() {
+        try {
+          const marketScores = new Map();
+          let executedTrades = 0;
+          const maxTradesPerCycle = 3;
+          
+          // Calculate scores for all markets
+          for (const market of this.markets) {
+            try {
+              const score = this.calculateMarketScore(market);
+              marketScores.set(market, score);
+              this.log(`${market} final score: ${score.toFixed(2)}`);
+            } catch (error) {
+              this.log(`Error processing ${market}: ${error.message}`, 'loss');
+            }
+          }
+
+          // Sort markets by score
+          const sortedMarkets = Array.from(marketScores.entries())
+            .sort((a, b) => b[1] - a[1]);
+
+          this.log(`Top markets selected: ${sortedMarkets.slice(0, 3).map(([m, s]) => `${m}(${s.toFixed(2)})`).join(', ')}`);
+
+          // Execute trades for top markets
+          for (const [market, score] of sortedMarkets) {
+            if (executedTrades >= maxTradesPerCycle) break;
+
+            try {
+              const analysis = this.analysis[market];
+              const signal = analysis.analyzeMarket();
+              
+              // Get faux trade performance
+              const fauxTrades = this.fauxTrades.get(market) || [];
+              const recentFauxTrades = fauxTrades.slice(-5);
+              const fauxWinRate = recentFauxTrades.length > 0 ? 
+                (recentFauxTrades.filter(t => t === 'win').length / recentFauxTrades.length) * 100 : 0;
+
+              // Enhanced trade conditions
+              const shouldTrade = signal && 
+                                signal !== 'NEUTRAL' && 
+                                (fauxWinRate >= 60 || score >= 0.65) &&
+                                this.hasEnoughData(market);
+
+              if (shouldTrade) {
+                // Calculate and round stake
+                const maxStake = this.accountBalance * this.maxStakePercentage;
+                const optimalStake = this.roundStake(Math.min(this.currentStake, maxStake));
+                
+                this.log(`Executing real trade for ${market} - Signal: ${signal}, Score: ${score.toFixed(2)}, Faux Win Rate: ${fauxWinRate.toFixed(2)}%`);
+                
+                const proposal = {
+                  proposal: 1,
+                  amount: optimalStake,
+                  basis: "stake",
+                  contract_type: signal,
+                  currency: "USD",
+                  duration: 1,
+                  duration_unit: "t",
+                  symbol: market
+                };
+
+                this.ws.send(JSON.stringify(proposal));
+                this.log(`Trade proposal sent for ${market}: ${signal} with stake $${optimalStake}`);
+                executedTrades++;
+              } else {
+                this.log(`No trade executed for ${market} - Signal: ${signal}, Score: ${score.toFixed(2)}, Faux Win Rate: ${fauxWinRate.toFixed(2)}%`);
+              }
+            } catch (error) {
+              this.log(`Error executing trade for ${market}: ${error.message}`, 'loss');
+            }
+          }
+        } catch (error) {
+          this.log(`Error in executeOptimalTrades: ${error.message}`, 'loss');
+        }
+      }
+
+      // Add new learning method
+      updateMarketLearning(market, isWin, pricePattern) {
+        // Update market performance
+        const performance = this.marketPerformance.get(market) || { wins: 0, total: 0, confidence: 0.5 };
+        performance.total++;
+        if (isWin) performance.wins++;
+        performance.confidence = (performance.wins / performance.total) * 
+                               (1 - Math.exp(-performance.total/10)); // Confidence grows with more trades
+        this.marketPerformance.set(market, performance);
+
+        // Update pattern memory if trade was successful
+        if (isWin && pricePattern) {
+          const patterns = this.patternMemory.get(market) || [];
+          patterns.push({
+            pattern: pricePattern,
+            timestamp: Date.now(),
+            profit: isWin ? 1 : -1
+          });
+          
+          // Keep only recent patterns
+          const recentPatterns = patterns.filter(p => Date.now() - p.timestamp < 3600000); // Last hour
+          this.patternMemory.set(market, recentPatterns);
+        }
+
+        // Adjust confidence threshold based on recent performance
+        const recentWinRate = this.calculateRecentWinRate();
+        this.confidenceThreshold = Math.max(0.65, Math.min(0.85, 0.65 + (1 - recentWinRate) * 0.2));
+      }
+
+      // Add pattern matching method
+      matchCurrentPattern(market) {
+        const currentPrices = this.analysis[market].prices.slice(-this.pricePatternLength);
+        if (currentPrices.length < this.pricePatternLength) return 0;
+
+        const patterns = this.patternMemory.get(market) || [];
+        let maxSimilarity = 0;
+
+        for (const {pattern} of patterns) {
+          if (pattern.length !== this.pricePatternLength) continue;
+          
+          // Calculate pattern similarity using dynamic time warping
+          const similarity = this.calculatePatternSimilarity(currentPrices, pattern);
+          maxSimilarity = Math.max(maxSimilarity, similarity);
+        }
+
+        return maxSimilarity;
+      }
+
+      calculatePatternSimilarity(pattern1, pattern2) {
+        // Normalize patterns
+        const norm1 = this.normalizePattern(pattern1);
+        const norm2 = this.normalizePattern(pattern2);
+
+        // Calculate Euclidean distance
+        let similarity = 0;
+        for (let i = 0; i < norm1.length; i++) {
+          similarity += Math.pow(norm1[i] - norm2[i], 2);
+        }
+        
+        return 1 / (1 + Math.sqrt(similarity));
+      }
+
+      normalizePattern(pattern) {
+        const min = Math.min(...pattern);
+        const max = Math.max(...pattern);
+        return pattern.map(p => (p - min) / (max - min));
+      }
+
+      // Add method to adjust trading parameters
+      adjustTradingParameters() {
+        const recentWinRate = this.calculateRecentWinRate();
+        
+        // Adjust analysis window based on performance
+        this.analysisWindow = Math.max(
+          30000, 
+          Math.min(60000, 30000 + (1 - recentWinRate) * 30000)
+        );
+
+        // Adjust learning rate
+        this.learningRate = Math.max(0.05, Math.min(0.3, 0.15 + (recentWinRate - 0.5) * 0.2));
+      }
+
+      // Add method to calculate recent win rate
+      calculateRecentWinRate(lookback = 10) {
+        const recentTrades = Array.from(this.tradeHistory.values())
+          .flat()
+          .sort((a, b) => b.timestamp - a.timestamp)
+          .slice(0, lookback);
+
+        if (recentTrades.length === 0) return 0.5;
+        
+        const wins = recentTrades.filter(t => t.success).length;
+        return wins / recentTrades.length;
+      }
+
+      // Add this helper method to check if we have enough data
+      hasEnoughData(market) {
+        const analysis = this.analysis[market];
+        const minDataPoints = Math.max(50, this.pricePatternLength * 2);
+        return analysis && analysis.prices.length >= minDataPoints;
+      }
+
+      // Add this method to handle proposal responses
+      handleProposal(data) {
+        if (data.proposal) {
+          try {
+            const buyRequest = {
+              buy: data.proposal.id,
+              price: data.proposal.ask_price
+            };
+            this.ws.send(JSON.stringify(buyRequest));
+            this.log(`Buying contract: ${data.proposal.longcode}`);
+          } catch (error) {
+            this.log(`Error processing proposal: ${error.message}`, 'loss');
+          }
+        }
+      }
+
+      // Add this helper method to round stakes properly
+      roundStake(value) {
+        return Math.floor(value * 100) / 100; // Ensures 2 decimal places
+      }
+
+      // Add method to calculate overall faux win rate
+      calculateOverallFauxWinRate() {
+        try {
+          let totalWins = 0;
+          let totalTrades = 0;
+
+          for (const market of this.markets) {
+            const trades = this.fauxTrades.get(market) || [];
+            totalWins += trades.filter(t => t === 'win').length;
+            totalTrades += trades.length;
+          }
+
+          return totalTrades > 0 ? (totalWins / totalTrades) * 100 : 0;
+        } catch (error) {
+          this.log(`Error calculating faux win rate: ${error.message}`, 'loss');
+          return 0;
+        }
+      }
+    }
+
+    // Initialize bot
+    const bot = new SyntheticIndicesBot();
+
+    // Set up event listeners
+    document.getElementById("startBtn").addEventListener("click", () => {
+      if (!bot.isRunning) {
+        bot.startBot();
+      }
+    });
+
+    document.getElementById("stopBtn").addEventListener("click", () => {
+      bot.stopBot();
+    });
+  </script>
+</body>
+</html>
